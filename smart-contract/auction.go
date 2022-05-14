@@ -69,22 +69,22 @@ func (s *SmartContract) CreateThread(ctx contractapi.TransactionContextInterface
 	}
 
 	tread := Thread{
-		Category: category,
-		Theme: theme,
+		Category:    category,
+		Theme:       theme,
 		Description: description,
-		Creator:   clientID,
-		Options:   threadOptions,
-		WinOption: []string{},
-		Status:    "open",
+		Creator:     clientID,
+		Options:     threadOptions,
+		WinOption:   []string{},
+		Status:      "open",
 	}
 
-	auctionJSON, err := json.Marshal(tread)
+	threadJSON, err := json.Marshal(tread)
 	if err != nil {
 		return err
 	}
 
 	// put auction into state
-	err = ctx.GetStub().PutState(threadID, auctionJSON)
+	err = ctx.GetStub().PutState(threadID, threadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to put auction in public data: %v", err)
 	}
@@ -93,6 +93,11 @@ func (s *SmartContract) CreateThread(ctx contractapi.TransactionContextInterface
 	err = setAssetStateBasedEndorsement(ctx, threadID, clientOrgID)
 	if err != nil {
 		return fmt.Errorf("failed setting state based endorsement for new organization: %v", err)
+	}
+
+	err = ctx.GetStub().SetEvent(fmt.Sprintf("CreateThread %s", threadID), threadJSON)
+	if err != nil {
+		return fmt.Errorf("failed to set event of creating thread: %v", err)
 	}
 
 	return nil
@@ -129,10 +134,10 @@ func (s *SmartContract) CreateVote(ctx contractapi.TransactionContextInterface, 
 // SubmitBid is used by the bidder to add the hash of that bid stored in private data to the
 // auction. Note that this function alters the auction in private state, and needs
 // to meet the auction endorsement policy. Transaction ID is used identify the bid
-func (s *SmartContract) UseVote(ctx contractapi.TransactionContextInterface, treadID string, txID string, option string) error {
+func (s *SmartContract) UseVote(ctx contractapi.TransactionContextInterface, threadID string, txID string, option string) error {
 
 	// get the tread from public state
-	tread, err := s.QueryThread(ctx, treadID)
+	tread, err := s.QueryThread(ctx, threadID)
 	if err != nil {
 		return fmt.Errorf("failed to get auction from public state %v", err)
 	}
@@ -151,14 +156,17 @@ func (s *SmartContract) UseVote(ctx contractapi.TransactionContextInterface, tre
 
 	// что если ключ будет привязан к никнейму подписанта
 	// use the transaction ID passed as a parameter to create composite vote key
-	voteKey, err := ctx.GetStub().CreateCompositeKey(voteKeyType, []string{treadID, txID, collection})
+	voteKey, err := ctx.GetStub().CreateCompositeKey(voteKeyType, []string{threadID, txID, collection})
 	if err != nil {
 		return fmt.Errorf("failed to create composite key: %v", err)
 	}
 
-	_, err = ctx.GetStub().GetState(voteKey)
+	data, err := ctx.GetStub().GetState(voteKey)
 	if err != nil {
 		return fmt.Errorf("failed to get vote: %v", err)
+	}
+	if data == nil {
+		return fmt.Errorf("vote does not exist: %s", data)
 	}
 
 	// Проверка наличия варианта в вариантах ответа
@@ -181,14 +189,18 @@ func (s *SmartContract) UseVote(ctx contractapi.TransactionContextInterface, tre
 		return err
 	}
 
-	err = ctx.GetStub().PutState(treadID, newThreadJSON)
+	err = ctx.GetStub().PutState(threadID, newThreadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to update auction: %v", err)
 	}
 
+	err = ctx.GetStub().SetEvent(fmt.Sprintf("UseVote %s", threadID), newThreadJSON)
+	if err != nil {
+		return fmt.Errorf("failed to set event of using vote: %v", err)
+	}
+
 	return nil
 }
-
 
 // EndAuction both changes the auction status to closed and calculates the winners
 // of the auction
@@ -206,13 +218,13 @@ func (s *SmartContract) EndThread(ctx contractapi.TransactionContextInterface, t
 		return fmt.Errorf("failed to get client identity %v", err)
 	}
 
-	Seller := thread.Creator
-	if Seller != clientID {
+	endPerson := thread.Creator
+	if endPerson != clientID {
 		return fmt.Errorf("auction can only be ended by seller: %v", err)
 	}
 
-	Status := thread.Status
-	if Status != "open" {
+	status := thread.Status
+	if status != "open" {
 		return fmt.Errorf("cannot close auction that is not open")
 	}
 
@@ -227,18 +239,24 @@ func (s *SmartContract) EndThread(ctx contractapi.TransactionContextInterface, t
 
 			voteAmount = len(v)
 		} else if len(v) == voteAmount {
-            winOptions = append(winOptions, k)
-        }
+			winOptions = append(winOptions, k)
+		}
 	}
 
 	thread.WinOption = winOptions
 	thread.Status = string("ended")
 
-	endedAuctionJSON, _ := json.Marshal(thread)
+	endedThreadJSON, _ := json.Marshal(thread)
 
-	err = ctx.GetStub().PutState(threadID, endedAuctionJSON)
+	err = ctx.GetStub().PutState(threadID, endedThreadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to end auction: %v", err)
 	}
+
+	err = ctx.GetStub().SetEvent(fmt.Sprintf("EndThread %s", threadID), endedThreadJSON)
+	if err != nil {
+		return fmt.Errorf("failed to set event of ending thread: %v", err)
+	}
+
 	return nil
 }
