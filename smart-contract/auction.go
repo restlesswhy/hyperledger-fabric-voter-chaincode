@@ -108,6 +108,21 @@ func (s *SmartContract) CreateThread(ctx contractapi.TransactionContextInterface
 // the transaction ID so that users can identify and query their bid
 func (s *SmartContract) CreateVote(ctx contractapi.TransactionContextInterface, threadID string) (string, error) {
 
+	clientID, err := s.GetSubmittingClientIdentity(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get client identity %v", err)
+	}
+
+	thread, err := s.QueryThread(ctx, threadID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get thread from public state %v", err)
+	}
+
+	creator := thread.Creator
+	if creator != clientID {
+		return "", fmt.Errorf("vote of this thread can only be created by creator of thread: %v", err)
+	}
+
 	// get the implicit collection name using the voter organization ID
 	collection, err := getCollectionName(ctx)
 	if err != nil {
@@ -209,7 +224,7 @@ func (s *SmartContract) EndThread(ctx contractapi.TransactionContextInterface, t
 	// get thread from public state
 	thread, err := s.QueryThread(ctx, threadID)
 	if err != nil {
-		return fmt.Errorf("failed to get auction from public state %v", err)
+		return fmt.Errorf("failed to get thread from public state %v", err)
 	}
 
 	// get username of submitting client
@@ -220,12 +235,12 @@ func (s *SmartContract) EndThread(ctx contractapi.TransactionContextInterface, t
 
 	endPerson := thread.Creator
 	if endPerson != clientID {
-		return fmt.Errorf("auction can only be ended by seller: %v", err)
+		return fmt.Errorf("thread can only be ended by creator: %v", err)
 	}
 
 	status := thread.Status
 	if status != "open" {
-		return fmt.Errorf("cannot close auction that is not open")
+		return fmt.Errorf("cannot close thread that is not open")
 	}
 
 	thread.Status = string("closed")
@@ -250,7 +265,7 @@ func (s *SmartContract) EndThread(ctx contractapi.TransactionContextInterface, t
 
 	err = ctx.GetStub().PutState(threadID, endedThreadJSON)
 	if err != nil {
-		return fmt.Errorf("failed to end auction: %v", err)
+		return fmt.Errorf("failed to end thread: %v", err)
 	}
 
 	err = ctx.GetStub().SetEvent(fmt.Sprintf("EndThread %s", threadID), endedThreadJSON)
