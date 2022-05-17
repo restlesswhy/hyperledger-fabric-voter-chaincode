@@ -31,6 +31,25 @@ func (s *SmartContract) QueryThread(ctx contractapi.TransactionContextInterface,
 	return auction, nil
 }
 
+func (s *SmartContract) QueryAnonThread(ctx contractapi.TransactionContextInterface, auctionID string) (*AnonThread, error) {
+
+	auctionJSON, err := ctx.GetStub().GetState(auctionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get auction object %v: %v", auctionID, err)
+	}
+	if auctionJSON == nil {
+		return nil, fmt.Errorf("auction does not exist")
+	}
+
+	var auction *AnonThread
+	err = json.Unmarshal(auctionJSON, &auction)
+	if err != nil {
+		return nil, err
+	}
+
+	return auction, nil
+}
+
 // QueryBid allows the submitter of the bid to read their bid from public state
 // func (s *SmartContract) QueryBid(ctx contractapi.TransactionContextInterface, auctionID string, txID string) (*FullBid, error) {
 
