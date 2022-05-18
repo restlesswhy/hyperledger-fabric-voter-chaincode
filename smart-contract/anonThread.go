@@ -76,13 +76,13 @@ func (s *SmartContract) CreateAnonThread(ctx contractapi.TransactionContextInter
 		Status:      "open",
 	}
 
-	auctionJSON, err := json.Marshal(tread)
+	threadJSON, err := json.Marshal(tread)
 	if err != nil {
 		return err
 	}
 
 	// put auction into state
-	err = ctx.GetStub().PutState(threadID, auctionJSON)
+	err = ctx.GetStub().PutState(threadID, threadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to put auction in public data: %v", err)
 	}
@@ -93,10 +93,15 @@ func (s *SmartContract) CreateAnonThread(ctx contractapi.TransactionContextInter
 		return fmt.Errorf("failed setting state based endorsement for new organization: %v", err)
 	}
 
+	err = ctx.GetStub().SetEvent(fmt.Sprintf("CreateAnonThread %s", threadID), threadJSON)
+	if err != nil {
+		return fmt.Errorf("failed to set event of creating thread: %v", err)
+	}
+
 	return nil
 }
 
-func (s *SmartContract) UseVoteAnon(ctx contractapi.TransactionContextInterface) error {
+func (s *SmartContract) UseAnonVote(ctx contractapi.TransactionContextInterface) error {
 
 	transientMap, err := ctx.GetStub().GetTransient()
 	if err != nil {
@@ -170,7 +175,7 @@ func (s *SmartContract) UseVoteAnon(ctx contractapi.TransactionContextInterface)
 		return fmt.Errorf("failed to update auction: %v", err)
 	}
 
-	err = ctx.GetStub().SetEvent(fmt.Sprintf("UseVote %s", vote.ThreadID), newThreadJSON)
+	err = ctx.GetStub().SetEvent(fmt.Sprintf("UseAnonVote %s", vote.ThreadID), newThreadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to set event of using vote: %v", err)
 	}
@@ -243,7 +248,7 @@ func (s *SmartContract) EndAnonThread(ctx contractapi.TransactionContextInterfac
 					calculatedVoteJSONHash := base64.URLEncoding.EncodeToString(hash.Sum(nil))
 
 					if calculatedVoteJSONHash == vote {
-						thread.Options[option] = append(thread.Options[option], vote)
+						thread.Options[option] = append(thread.Options[option], "vote")
 					}
 				}
 			}
@@ -273,7 +278,7 @@ func (s *SmartContract) EndAnonThread(ctx contractapi.TransactionContextInterfac
 		return fmt.Errorf("failed to end thread: %v", err)
 	}
 
-	err = ctx.GetStub().SetEvent(fmt.Sprintf("EndThread %s", endData.ThreadID), endedThreadJSON)
+	err = ctx.GetStub().SetEvent(fmt.Sprintf("EndAnonThread %s", endData.ThreadID), endedThreadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to set event of ending thread: %v", err)
 	}
