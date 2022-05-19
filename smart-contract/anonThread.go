@@ -81,7 +81,7 @@ func (s *SmartContract) CreateAnonThread(ctx contractapi.TransactionContextInter
 	// Выгружаем голосование в блокчейн.
 	err = ctx.GetStub().PutState(threadID, threadJSON)
 	if err != nil {
-		return fmt.Errorf("failed to put auction in public data: %v", err)
+		return fmt.Errorf("failed to put thread in public data: %v", err)
 	}
 
 	// Устанавливаем организацию вызыввающего как ендорсера.
@@ -129,13 +129,13 @@ func (s *SmartContract) UseAnonVote(ctx contractapi.TransactionContextInterface)
 	// Получаем сущность голосования из блокчейна.
 	tread, err := s.QueryAnonThread(ctx, vote.ThreadID)
 	if err != nil {
-		return fmt.Errorf("failed to get auction from public state %v", err)
+		return fmt.Errorf("failed to get thread from public state %v", err)
 	}
 
 	// Проверяем, открыто ли голосование.
 	Status := tread.Status
 	if Status != "open" {
-		return fmt.Errorf("cannot join closed or ended auction")
+		return fmt.Errorf("cannot join closed or ended thread")
 	}
 
 	// Получаем ID организации.
@@ -222,7 +222,7 @@ func (s *SmartContract) EndAnonThread(ctx contractapi.TransactionContextInterfac
 
 	transientEndDataJSON, ok := transientMap["option"]
 	if !ok {
-		return fmt.Errorf("bid key not found in the transient map")
+		return fmt.Errorf("vote key not found in the transient map")
 	}
 
 	endData := &EndData{}

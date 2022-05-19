@@ -87,7 +87,7 @@ func (s *SmartContract) CreateThread(ctx contractapi.TransactionContextInterface
 	// Выгружаем голосовние в блокчейн
 	err = ctx.GetStub().PutState(threadID, threadJSON)
 	if err != nil {
-		return fmt.Errorf("failed to put auction in public data: %v", err)
+		return fmt.Errorf("failed to put thread in public data: %v", err)
 	}
 
 	// Уствнавливаем организацию создателя как ендорсера над внечением изменений
@@ -170,13 +170,13 @@ func (s *SmartContract) UseVote(ctx contractapi.TransactionContextInterface, thr
 	// Загружаем сущность голосования из блокчейна.
 	thread, err := s.QueryThread(ctx, threadID)
 	if err != nil {
-		return fmt.Errorf("failed to get auction from public state %v", err)
+		return fmt.Errorf("failed to get thread from public state %v", err)
 	}
 
 	// Проверяем, открытое ли голосование.
 	Status := thread.Status
 	if Status != "open" {
-		return fmt.Errorf("cannot join closed or ended auction")
+		return fmt.Errorf("cannot join closed or ended thread")
 	}
 
 	// Получаем ID организации.
