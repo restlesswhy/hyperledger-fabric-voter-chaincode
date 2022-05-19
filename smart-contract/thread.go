@@ -15,7 +15,7 @@ type SmartContract struct {
 	contractapi.Contract
 }
 
-// Thread data
+// Сущность голосвания
 type Thread struct {
 	Category    string              `json:"category"`
 	Theme       string              `json:"theme"`
@@ -26,13 +26,9 @@ type Thread struct {
 	Status      string              `json:"status"`
 }
 
-type IssuedVotes struct {
-	Votes map[string]bool `json:"votes"`
-}
-
 const voteKeyType = "vote"
 
-// Создает сущность публичного голосования по заданным параметрам. 
+// Создает сущность публичного голосования по заданным параметрам.
 func (s *SmartContract) CreateThread(ctx contractapi.TransactionContextInterface) error {
 	// Получаем параметры из аргументов.
 	args := ctx.GetStub().GetStringArgs()
@@ -100,23 +96,6 @@ func (s *SmartContract) CreateThread(ctx contractapi.TransactionContextInterface
 		return fmt.Errorf("failed setting state based endorsement for new organization: %v", err)
 	}
 
-	// Загружаем в блокчейн пустое хранилище для голосов по определенному голосованию.
-	votes := &IssuedVotes{
-		Votes: make(map[string]bool),
-	}
-
-	votesJSON, err := json.Marshal(votes)
-	if err != nil {
-		return err
-	}
-
-	votesKey := threadID + "_votes"
-
-	err = ctx.GetStub().PutState(votesKey, votesJSON)
-	if err != nil {
-		return fmt.Errorf("failed to put thread in public data: %v", err)
-	}
-
 	// Записываем ивент создания голосования.
 	err = ctx.GetStub().SetEvent(fmt.Sprintf("CreateThread %s", threadID), threadJSON)
 	if err != nil {
@@ -146,6 +125,12 @@ func (s *SmartContract) CreateVote(ctx contractapi.TransactionContextInterface, 
 		return "", fmt.Errorf("vote of this thread can only be created by creator of thread: %v", err)
 	}
 
+	// Проверяем, открытое ли голосование.
+	threadStatus := thread.Status
+	if threadStatus != "open" {
+		return "", fmt.Errorf("cannot join closed or ended auction")
+	}
+
 	// Получаем ID организации.
 	collection, err := getCollectionName(ctx)
 	if err != nil {
@@ -161,33 +146,17 @@ func (s *SmartContract) CreateVote(ctx contractapi.TransactionContextInterface, 
 		return "", fmt.Errorf("failed to create composite key: %v", err)
 	}
 
-	err = ctx.GetStub().PutState(voteKey, []byte("vote"))
+	// Проверяем, не выдан ли уже голос данному пользователю. Если нет то создаем его.
+	res, err := ctx.GetStub().GetState(voteKey)
 	if err != nil {
-		return "", fmt.Errorf("failed to input vote into collection: %v", err)
+		return "", fmt.Errorf("failed to check if exist key: %v", err)
+	}
+	if res != nil {
+		return "", fmt.Errorf("this user already have vote")
 	}
 
-	// Вписываем выданных голос в список выданных голосв
-	votesKey := threadID + "_votes"
-	votesJSON, err := ctx.GetStub().GetState(votesKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to get votes from state: %v", err)
-	}
-
-	votes := &IssuedVotes{}
-	err = json.Unmarshal(votesJSON, &votes)
-	if err != nil {
-		return "", err
-	}
-
-	votes.Votes[txID] = false
-
-	votesJSON, err = json.Marshal(votes)
-	if err != nil {
-		return "", err
-	}
-
-	// Выгружаем список голосов в блокчейн 
-	err = ctx.GetStub().PutState(votesKey, votesJSON)
+	status, _ := json.Marshal(true)
+	err = ctx.GetStub().PutState(voteKey, status)
 	if err != nil {
 		return "", fmt.Errorf("failed to input vote into collection: %v", err)
 	}
@@ -197,36 +166,17 @@ func (s *SmartContract) CreateVote(ctx contractapi.TransactionContextInterface, 
 
 // Применяет голос к сущности.
 func (s *SmartContract) UseVote(ctx contractapi.TransactionContextInterface, threadID string, txID string, option string) error {
-	
+
 	// Загружаем сущность голосования из блокчейна.
-	tread, err := s.QueryThread(ctx, threadID)
+	thread, err := s.QueryThread(ctx, threadID)
 	if err != nil {
 		return fmt.Errorf("failed to get auction from public state %v", err)
 	}
-	
+
 	// Проверяем, открытое ли голосование.
-	Status := tread.Status
+	Status := thread.Status
 	if Status != "open" {
 		return fmt.Errorf("cannot join closed or ended auction")
-	}
-
-	// Проверяем наличие и актуальность голоса.
-	votesKey := threadID + "_votes"
-	votesJSON, err := ctx.GetStub().GetState(votesKey)
-	if err != nil {
-		return fmt.Errorf("failed to get votes from state: %v", err)
-	}
-
-	votes := &IssuedVotes{}
-	err = json.Unmarshal(votesJSON, &votes)
-	if err != nil {
-		return err
-	}
-
-	if vote, ok := votes.Votes[txID]; !ok {
-		return fmt.Errorf("this vote does no exist")
-	} else if vote {
-		return fmt.Errorf("this vote already used")
 	}
 
 	// Получаем ID организации.
@@ -247,24 +197,26 @@ func (s *SmartContract) UseVote(ctx contractapi.TransactionContextInterface, thr
 		return fmt.Errorf("failed to create composite key: %v", err)
 	}
 
-	// Проверяем, существует ли голос по заданному ключу.
+	// Проверяем, существует ли голос по заданному ключу, и не использован ли он.
 	data, err := ctx.GetStub().GetState(voteKey)
 	if err != nil {
 		return fmt.Errorf("failed to get vote: %v", err)
 	}
 	if data == nil {
 		return fmt.Errorf("vote does not exist: %s", data)
+	} else if len(data) == 5 {
+		return fmt.Errorf("vote already used")
 	}
 
 	// Проверка наличия варианта в вариантах ответа
-	if !contains(tread.Options, option) {
+	if !contains(thread.Options, option) {
 		return fmt.Errorf("failed to use vote: unexpected option")
 	}
 
 	// Добавляем голос к выбранному варианту и загружаем в блокчейн.
-	tread.Options[option] = append(tread.Options[option], userID)
+	thread.Options[option] = append(thread.Options[option], userID)
 
-	threadJSON, err := json.Marshal(tread)
+	threadJSON, err := json.Marshal(thread)
 	if err != nil {
 		return err
 	}
@@ -274,14 +226,9 @@ func (s *SmartContract) UseVote(ctx contractapi.TransactionContextInterface, thr
 		return fmt.Errorf("failed to update auction: %v", err)
 	}
 
-	// Обновляем состояние голоса и выгружаем его в блокчейн.
-	votes.Votes[txID] = true
-	votesJSON, err = json.Marshal(votes)
-	if err != nil {
-		return err
-	}
-
-	err = ctx.GetStub().PutState(votesKey, votesJSON)
+	// Обновляем статус голоса.
+	status, _ := json.Marshal(false)
+	err = ctx.GetStub().PutState(voteKey, status)
 	if err != nil {
 		return fmt.Errorf("failed to update auction: %v", err)
 	}
@@ -322,8 +269,6 @@ func (s *SmartContract) EndThread(ctx contractapi.TransactionContextInterface, t
 		return fmt.Errorf("cannot close thread that is not open")
 	}
 
-	thread.Status = string("closed")
-
 	// Определяем победителя/победителей.
 	voteAmount := 0
 	winOptions := make([]string, 0)
@@ -340,7 +285,7 @@ func (s *SmartContract) EndThread(ctx contractapi.TransactionContextInterface, t
 
 	// Записываем победителя и выгружаем в блокчейн.
 	thread.WinOption = winOptions
-	thread.Status = string("ended")
+	thread.Status = string("closed")
 
 	endedThreadJSON, _ := json.Marshal(thread)
 

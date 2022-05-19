@@ -9,6 +9,7 @@ import (
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
+// Сущность анонимного голосования
 type AnonThread struct {
 	Category    string              `json:"category"`
 	Theme       string              `json:"theme"`
@@ -20,15 +21,9 @@ type AnonThread struct {
 	Status      string              `json:"status"`
 }
 
-type AnonVote struct {
-	ThreadID   string `json:"thread_id"`
-	TxID       string `json:"tx_id"`
-	Option     string `json:"option"`
-	PrivateKey string `json:"private_key"`
-}
-
+// Создает анонимное голосование.
 func (s *SmartContract) CreateAnonThread(ctx contractapi.TransactionContextInterface) error {
-
+	// Получаем параметры из аргументов.
 	args := ctx.GetStub().GetStringArgs()
 	if len(args) < 4 {
 		return fmt.Errorf("not enough arguments")
@@ -40,6 +35,7 @@ func (s *SmartContract) CreateAnonThread(ctx contractapi.TransactionContextInter
 	description := args[4]
 	options := args[5:]
 
+	// Запрашиваем голосование по ID из блокчейна, тем самым проверяем, не существует ли уже голосвание с данным ID.
 	res, err := ctx.GetStub().GetState(threadID)
 	if err != nil {
 		return fmt.Errorf("failed to get thread %v", err)
@@ -47,18 +43,19 @@ func (s *SmartContract) CreateAnonThread(ctx contractapi.TransactionContextInter
 		return fmt.Errorf("failed to create, thread ID already exist")
 	}
 
+	// Получаем ID вызывающего.
 	clientID, err := s.GetSubmittingClientIdentity(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get client identity %v", err)
 	}
 
-	// get org of submitting client
+	// Получаем ID организации вызывающего.
 	clientOrgID, err := ctx.GetClientIdentity().GetMSPID()
 	if err != nil {
 		return fmt.Errorf("failed to get client identity %v", err)
 	}
 
-	// Create tread
+	// Создаем сущность голосвания и заполняем ее параметрами.
 	threadOptions := make(map[string][]string)
 
 	for _, option := range options {
@@ -81,18 +78,19 @@ func (s *SmartContract) CreateAnonThread(ctx contractapi.TransactionContextInter
 		return err
 	}
 
-	// put auction into state
+	// Выгружаем голосование в блокчейн.
 	err = ctx.GetStub().PutState(threadID, threadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to put auction in public data: %v", err)
 	}
 
-	// set the creator of the tread as an endorser
+	// Устанавливаем организацию вызыввающего как ендорсера.
 	err = setAssetStateBasedEndorsement(ctx, threadID, clientOrgID)
 	if err != nil {
 		return fmt.Errorf("failed setting state based endorsement for new organization: %v", err)
 	}
 
+	// Отправляем ивент о создании голосования.
 	err = ctx.GetStub().SetEvent(fmt.Sprintf("CreateAnonThread %s", threadID), threadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to set event of creating thread: %v", err)
@@ -101,8 +99,17 @@ func (s *SmartContract) CreateAnonThread(ctx contractapi.TransactionContextInter
 	return nil
 }
 
+type AnonVote struct {
+	ThreadID   string `json:"thread_id"`
+	TxID       string `json:"tx_id"`
+	Option     string `json:"option"`
+	PrivateKey string `json:"private_key"`
+}
+
+// Принимает анонимный голос и добавляет хэш этого голоса к сущности.
 func (s *SmartContract) UseAnonVote(ctx contractapi.TransactionContextInterface) error {
 
+	// Получаем из запроса зашифрованные данные
 	transientMap, err := ctx.GetStub().GetTransient()
 	if err != nil {
 		return fmt.Errorf("error getting transient: %v", err)
@@ -110,7 +117,7 @@ func (s *SmartContract) UseAnonVote(ctx contractapi.TransactionContextInterface)
 
 	transientOptionJSON, ok := transientMap["option"]
 	if !ok {
-		return fmt.Errorf("bid key not found in the transient map")
+		return fmt.Errorf("option key not found in the transient map")
 	}
 
 	vote := &AnonVote{}
@@ -119,37 +126,45 @@ func (s *SmartContract) UseAnonVote(ctx contractapi.TransactionContextInterface)
 		return fmt.Errorf("error unmarshal vote data transient: %v", err)
 	}
 
-	// get the tread from public state
+	// Получаем сущность голосования из блокчейна.
 	tread, err := s.QueryAnonThread(ctx, vote.ThreadID)
 	if err != nil {
 		return fmt.Errorf("failed to get auction from public state %v", err)
 	}
 
-	// tread needs to be open for users to add their vote
+	// Проверяем, открыто ли голосование.
 	Status := tread.Status
 	if Status != "open" {
 		return fmt.Errorf("cannot join closed or ended auction")
 	}
 
-	// get the inplicit collection name of voter org
+	// Получаем ID организации.
 	collection, err := getCollectionName(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get implicit collection name: %v", err)
 	}
 
-	// что если ключ будет привязан к никнейму подписанта
-	// use the transaction ID passed as a parameter to create composite vote key
-	voteKey, err := ctx.GetStub().CreateCompositeKey(voteKeyType, []string{vote.ThreadID, vote.TxID, collection})
+	// Получаем ID пользователя
+	userID, _, err := ctx.GetClientIdentity().GetAttributeValue("hf.EnrollmentID")
+	if err != nil {
+		return err
+	}
+
+	// Создаем композитный ключ для поиска голоса в блокчейне.
+	voteKey, err := ctx.GetStub().CreateCompositeKey(voteKeyType, []string{vote.ThreadID, vote.TxID, collection, userID})
 	if err != nil {
 		return fmt.Errorf("failed to create composite key: %v", err)
 	}
 
+	// Проверяем, существует ли голос по заданному ключу, и не использован ли он.
 	data, err := ctx.GetStub().GetState(voteKey)
 	if err != nil {
 		return fmt.Errorf("failed to get vote: %v", err)
 	}
 	if data == nil {
 		return fmt.Errorf("vote does not exist: %s", data)
+	} else if len(data) == 5 {
+		return fmt.Errorf("vote already used")
 	}
 
 	// Проверка наличия варианта в вариантах ответа
@@ -175,6 +190,14 @@ func (s *SmartContract) UseAnonVote(ctx contractapi.TransactionContextInterface)
 		return fmt.Errorf("failed to update auction: %v", err)
 	}
 
+	// Обновляем статус голоса.
+	status, _ := json.Marshal(false)
+	err = ctx.GetStub().PutState(voteKey, status)
+	if err != nil {
+		return fmt.Errorf("failed to update auction: %v", err)
+	}
+
+	// Записываем ивент о использовании голоса.
 	err = ctx.GetStub().SetEvent(fmt.Sprintf("UseAnonVote %s", vote.ThreadID), newThreadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to set event of using vote: %v", err)
@@ -189,8 +212,9 @@ type EndData struct {
 	VoteTxs  []string `json:"vote_txs"`
 }
 
+// Завершает голосование, расшифровывает голоса и определяет выйгрышный вариант/варианты.
 func (s *SmartContract) EndAnonThread(ctx contractapi.TransactionContextInterface) error {
-
+	// Получаем зашифрованные данные.
 	transientMap, err := ctx.GetStub().GetTransient()
 	if err != nil {
 		return fmt.Errorf("error getting transient: %v", err)
@@ -207,29 +231,33 @@ func (s *SmartContract) EndAnonThread(ctx contractapi.TransactionContextInterfac
 		return fmt.Errorf("error unmarshal vote data transient: %v", err)
 	}
 
-	// get thread from public state
+	// Загружаем сущность голосования из блокчейна.
 	thread, err := s.QueryAnonThread(ctx, endData.ThreadID)
 	if err != nil {
 		return fmt.Errorf("failed to get thread from public state %v", err)
 	}
 
-	// get username of submitting client
+	// Получаем ID вызывающего.
 	clientID, err := s.GetSubmittingClientIdentity(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get client identity %v", err)
 	}
 
+	// Проверяем что вызывающий - автор голосования.
 	endPerson := thread.Creator
 	if endPerson != clientID {
 		return fmt.Errorf("thread can only be ended by creator: %v", err)
 	}
 
+	// Если статус не "open" значит голосование уже закрыто.
 	status := thread.Status
 	if status != "open" {
 		return fmt.Errorf("cannot close thread that is not open")
 	}
 
 	thread.Status = string("closed")
+
+	// Разгадываем хэшт голосов и распределяем варианты.
 	for _, vote := range thread.Votes {
 		for _, tx := range endData.VoteTxs {
 			for _, key := range endData.Keys {
@@ -255,6 +283,7 @@ func (s *SmartContract) EndAnonThread(ctx contractapi.TransactionContextInterfac
 		}
 	}
 
+	// Определяем выйгравший вариант/варианты.
 	voteAmount := 0
 	winOptions := make([]string, 0)
 	for k, v := range thread.Options {
@@ -269,15 +298,16 @@ func (s *SmartContract) EndAnonThread(ctx contractapi.TransactionContextInterfac
 	}
 
 	thread.WinOption = winOptions
-	thread.Status = string("ended")
 
 	endedThreadJSON, _ := json.Marshal(thread)
 
+	// Выгружаем измененное голосование в блокчейн.
 	err = ctx.GetStub().PutState(endData.ThreadID, endedThreadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to end thread: %v", err)
 	}
 
+	// Записываем ивент о завершении голосования.
 	err = ctx.GetStub().SetEvent(fmt.Sprintf("EndAnonThread %s", endData.ThreadID), endedThreadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to set event of ending thread: %v", err)
